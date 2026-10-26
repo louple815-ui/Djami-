@@ -1,0 +1,63 @@
+name: Build DJAMI Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupération du code source
+        uses: actions/checkout@v4
+
+      - name: Configuration de Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Configuration du SDK Android
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Exécution des tests unitaires
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew testDebugUnitTest --no-daemon
+          else
+            gradle testDebugUnitTest --no-daemon
+          fi
+
+      - name: Compilation de l'APK Debug
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug --no-daemon
+          else
+            gradle assembleDebug --no-daemon
+          fi
+
+      - name: Vérification de l'existence de l'APK
+        run: |
+          echo "=== Vérification de l'APK généré ==="
+          ls -lh app/build/outputs/apk/debug/
+          APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ] || [ ! -s "$APK_PATH" ]; then
+            echo "ERREUR: L'APK est introuvable ou vide."
+            exit 1
+          fi
+          echo "APK valide trouvé: $APK_PATH"
+
+      - name: Publication de l'APK en artefact GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: DJAMI-App-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14

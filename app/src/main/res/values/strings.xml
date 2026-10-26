@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">DJAMI</string>
+    <string name="status_ready">Prêt</string>
+    <string name="status_listening">Écoute en cours…</string>
+    <string name="status_processing">Traitement…</string>
+    <string name="status_speaking">Réponse vocale…</string>
+    <string name="status_error">Erreur</string>
+</resources>
