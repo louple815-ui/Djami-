@@ -11,14 +11,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Règle Node 24 : Migration du runtime des GitHub Actions JavaScript vers Node 24
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
       - name: Récupération du code source
         uses: actions/checkout@v4
 
-      - name: Configuration de Java JDK 17
+      - name: Configuration de Java JDK (Temurin)
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
           cache: 'gradle'
 
@@ -27,21 +31,33 @@ jobs:
         with:
           packages: 'platform-tools'
 
-      - name: Exécution des tests unitaires
+      # Configuration officielle de Gradle 9.3.1 compatible avec AGP 9.1.1
+      - name: Configuration de Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      # Assurer les droits d'exécution sur le wrapper
+      - name: Rendre gradlew exécutable
         run: |
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew testDebugUnitTest --no-daemon
+          fi
+
+      - name: Exécution des tests unitaires
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew testDebugUnitTest --no-daemon --stacktrace
           else
-            gradle testDebugUnitTest --no-daemon
+            gradle testDebugUnitTest --no-daemon --stacktrace
           fi
 
       - name: Compilation de l'APK Debug
         run: |
           if [ -f "./gradlew" ]; then
-            ./gradlew assembleDebug --no-daemon
+            ./gradlew assembleDebug --no-daemon --stacktrace
           else
-            gradle assembleDebug --no-daemon
+            gradle assembleDebug --no-daemon --stacktrace
           fi
 
       - name: Vérification de l'existence de l'APK
@@ -53,7 +69,7 @@ jobs:
             echo "ERREUR: L'APK est introuvable ou vide."
             exit 1
           fi
-          echo "APK valide trouvé: $APK_PATH"
+          echo "APK valide trouvé: $APK_PATH (Taille: $(du -h "$APK_PATH" | cut -f1))"
 
       - name: Publication de l'APK en artefact GitHub
         uses: actions/upload-artifact@v4
