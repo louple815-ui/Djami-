@@ -1,6 +1,6 @@
 {
   "name": "DJAMI",
   "description": "DJAMI - Assistant Vocal et IA en Français pour Android avec commandes locales, synthèse vocale féminine et mode hybride hors-ligne/en-ligne.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

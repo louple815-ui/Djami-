@@ -25,7 +25,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        handleWakeIntent(intent)
+        val launchedByWakeWord = handleWakeIntent(intent)
+        if (!launchedByWakeWord) {
+            viewModel.syncWakeWordStateFromPreferences()
+        }
 
         setContent {
             DjamiTheme {
@@ -46,16 +49,27 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleWakeIntent(intent)
+        val launchedByWakeWord = handleWakeIntent(intent)
+        if (!launchedByWakeWord) {
+            viewModel.syncWakeWordStateFromPreferences()
+        }
     }
 
-    private fun handleWakeIntent(intent: Intent?) {
+    private fun handleWakeIntent(intent: Intent?): Boolean {
         if (intent?.getBooleanExtra(WakeWordService.EXTRA_WAKE_TRIGGERED, false) == true) {
-            val text = intent.getStringExtra(WakeWordService.EXTRA_WAKE_TEXT) ?: ""
-            viewModel.logDiagnostic("Application réveillée par le mot-clé Hey DJAMI ($text)")
-            // Déclenche l'écoute active pour la commande suivante
-            viewModel.startListening()
+            val text = intent.getStringExtra(WakeWordService.EXTRA_WAKE_TEXT).orEmpty()
+            // Consommer le marqueur pour qu'il ne déclenche pas une nouvelle écoute plus tard
+            intent.removeExtra(WakeWordService.EXTRA_WAKE_TRIGGERED)
+            intent.removeExtra(WakeWordService.EXTRA_WAKE_TEXT)
+            viewModel.onWakeWordActivated(text)
+            return true
         }
+        return false
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.syncWakeWordStateFromPreferences()
     }
 
     override fun onPause() {

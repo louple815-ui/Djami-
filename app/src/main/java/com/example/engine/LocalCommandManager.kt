@@ -46,10 +46,12 @@ class LocalCommandManager(private val context: Context) {
             .replace("hey", "")
             .replace("s'il te plaît", "")
             .replace("s'il vous plaît", "")
+            .replace("s'il te plait", "")
+            .replace("s'il vous plait", "")
             .trim()
 
         // 1. Commande d'arrêt vocal
-        if (text == "stop" || text.contains("arrête de parler") || text.contains("tais-toi") || text == "silence") {
+        if (text == "stop" || text.contains("arrête de parler") || text.contains("arrete de parler") || text.contains("tais-toi") || text == "silence") {
             return CommandResult.Handled(
                 responseSpeech = "J'arrête.",
                 actionDescription = "Synthèse vocale interrompue",
@@ -67,14 +69,14 @@ class LocalCommandManager(private val context: Context) {
         }
 
         // 3. Activer / Désactiver la veille vocale
-        if (text.contains("active la veille") || text.contains("allume la veille") || text.contains("active l'écoute en fond")) {
+        if (text.contains("active la veille") || text.contains("allume la veille") || text.contains("active l'écoute en fond") || text.contains("active l ecoute en fond")) {
             return CommandResult.Handled(
                 responseSpeech = "Activation de la veille vocale.",
                 actionDescription = "Veille vocale activée",
                 toggleWakeWord = true
             )
         }
-        if (text.contains("désactive la veille") || text.contains("desactive la veille") || text.contains("arrête la veille") || text.contains("stoppe la veille")) {
+        if (text.contains("désactive la veille") || text.contains("desactive la veille") || text.contains("arrête la veille") || text.contains("arrete la veille") || text.contains("stoppe la veille")) {
             return CommandResult.Handled(
                 responseSpeech = "Veille vocale désactivée.",
                 actionDescription = "Veille vocale désactivée",
@@ -82,8 +84,20 @@ class LocalCommandManager(private val context: Context) {
             )
         }
 
+        // Détection stricte des demandes de l'heure courante (ne doit pas intercepter "à quelle heure...", les horaires ou "décalage horaire")
+        val isScheduledTimeQuestion = text.startsWith("à quelle heure") || text.startsWith("a quelle heure") ||
+                text.contains("à quelle heure") || text.contains("a quelle heure")
+        val asksCurrentTime = !isScheduledTimeQuestion && (
+                text == "heure" || text == "l'heure" || text == "quelle heure" ||
+                text.contains("quelle heure est-il") || text.contains("quelle heure est il") ||
+                text.contains("heure actuelle") || text.contains("donne-moi l'heure") ||
+                text.contains("donne moi l'heure") || text.contains("dis-moi l'heure") ||
+                text.contains("dis moi l'heure") || text.contains("il est quelle heure") ||
+                text.contains("on est à quelle heure")
+        )
+
         // 4. Heure
-        if (text.contains("heure")) {
+        if (asksCurrentTime) {
             val format = SimpleDateFormat("HH'h'mm", Locale.FRENCH)
             val heure = format.format(Date()).replace("h00", " heures précises").replace("h", " heures ")
             return CommandResult.Handled(
@@ -92,8 +106,20 @@ class LocalCommandManager(private val context: Context) {
             )
         }
 
+        // Détection stricte de la date du jour (évite d'intercepter "date de la fête", "date d'anniversaire", etc.)
+        val isSpecificOrHistoricalDate = text.contains("date de") || text.contains("date du match") ||
+                text.contains("date d'anniversaire") || text.contains("date limite") || text.contains("date d'expiration")
+        val asksCurrentDate = !isSpecificOrHistoricalDate && (
+                text == "date" || text == "quelle est la date" || text.startsWith("quelle est la date d'aujourd'hui") ||
+                text.startsWith("quelle est la date aujourd'hui") || text.startsWith("quelle est la date du jour") ||
+                text.contains("on est quel jour") || text.contains("quel jour sommes-nous") ||
+                text.contains("quel jour sommes nous") || text.contains("date d'aujourd'hui") ||
+                text.contains("date aujourd'hui") || text == "donne-moi la date" ||
+                text == "donne moi la date" || text == "dis-moi la date" || text == "dis moi la date"
+        )
+
         // 5. Date
-        if (text.contains("date") || text.contains("jour") && (text.contains("quel") || text.contains("sommes"))) {
+        if (asksCurrentDate) {
             val format = SimpleDateFormat("EEEE d MMMM yyyy", Locale.FRENCH)
             val dateFormatee = format.format(Date())
             return CommandResult.Handled(
@@ -102,8 +128,27 @@ class LocalCommandManager(private val context: Context) {
             )
         }
 
+        // Seules les demandes explicites d'ouverture doivent lancer une application.
+        // Les questions d'explication (ex: "explique-moi WhatsApp", "c'est quoi YouTube", "qui a créé WhatsApp")
+        // NE DOIVENT PAS ouvrir l'application mais être transmises à l'IA.
+        val isExplanationOrQuestion = text.startsWith("explique") ||
+                text.startsWith("pourquoi") ||
+                text.startsWith("c'est quoi") ||
+                text.startsWith("qui a") ||
+                text.startsWith("comment marche") ||
+                text.startsWith("comment fonctionne") ||
+                text.startsWith("parle-moi de") ||
+                text.startsWith("parle moi de") ||
+                text.startsWith("qu'est-ce que") ||
+                text.startsWith("qu est ce que")
+
+        val asksToOpen = !isExplanationOrQuestion && (
+                Regex("^(?:s'il te plait\\s+|s'il vous plait\\s+)?(?:ouvre|ouvrir|lance|lancer|demarre|démarre|va sur|aller sur|affiche|mets|peux-tu ouvrir|peux tu ouvrir|peux-tu m'ouvrir|peux tu m'ouvrir)\\b")
+                    .containsMatchIn(text) || text in setOf("whatsapp", "youtube", "google", "internet", "navigateur", "appareil photo", "camera", "caméra", "galerie", "paramètres", "parametres")
+        )
+
         // 6. Ouvrir WhatsApp
-        if (text.contains("whatsapp")) {
+        if (text.contains("whatsapp") && asksToOpen) {
             val pkg = "com.whatsapp"
             val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
             return if (launchIntent != null) {
@@ -121,7 +166,7 @@ class LocalCommandManager(private val context: Context) {
         }
 
         // 7. Ouvrir YouTube
-        if (text.contains("youtube")) {
+        if (text.contains("youtube") && asksToOpen) {
             val pkg = "com.google.android.youtube"
             val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
             return if (launchIntent != null) {
@@ -131,7 +176,6 @@ class LocalCommandManager(private val context: Context) {
                     intentToLaunch = launchIntent
                 )
             } else {
-                // Fallback web
                 val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com")).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
@@ -144,7 +188,7 @@ class LocalCommandManager(private val context: Context) {
         }
 
         // 8. Ouvrir les paramètres du téléphone
-        if (text.contains("paramètre") || text.contains("parametre") || text.contains("configuration") || text.contains("réglage")) {
+        if ((text.contains("paramètre") || text.contains("parametre") || text.contains("configuration") || text.contains("réglage") || text.contains("reglage")) && asksToOpen) {
             val intent = Intent(Settings.ACTION_SETTINGS).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
@@ -156,7 +200,7 @@ class LocalCommandManager(private val context: Context) {
         }
 
         // 9. Ouvrir l'appareil photo
-        if (text.contains("appareil photo") || text.contains("camera") || text.contains("caméra") || text.contains("photo")) {
+        if ((text.contains("appareil photo") || text.contains("camera") || text.contains("caméra") || text == "photo") && asksToOpen) {
             val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
@@ -175,7 +219,7 @@ class LocalCommandManager(private val context: Context) {
         }
 
         // 10. Ouvrir la galerie
-        if (text.contains("galerie") || text.contains("photos")) {
+        if ((text.contains("galerie") || text == "photos" || text.contains("mes photos")) && asksToOpen) {
             val intent = Intent(Intent.ACTION_VIEW, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
@@ -187,7 +231,7 @@ class LocalCommandManager(private val context: Context) {
         }
 
         // 11. Ouvrir le navigateur
-        if (text.contains("navigateur") || text.contains("internet") || text.contains("google")) {
+        if ((text.contains("navigateur") || text.contains("internet") || text.contains("google")) && asksToOpen) {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com")).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
@@ -199,7 +243,9 @@ class LocalCommandManager(private val context: Context) {
         }
 
         // 12. Téléphone / Clavier
-        if (text.contains("téléphone") || text.contains("telephone") || text.contains("appel") || text.contains("clavier")) {
+        if ((text.contains("ouvre le clavier") || text.contains("ouvre le téléphone") ||
+                text.contains("ouvre le telephone") || text.contains("clavier téléphonique") ||
+                text.contains("clavier telephonique") || text.startsWith("appelle ")) && (asksToOpen || text.startsWith("appelle "))) {
             val intent = Intent(Intent.ACTION_DIAL).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
@@ -213,13 +259,14 @@ class LocalCommandManager(private val context: Context) {
         // 13. Qui es-tu ? / Identité
         if (text.contains("qui es-tu") || text.contains("qui es tu") || text.contains("t'appelles") || text.contains("ton nom") || text.contains("présente-toi") || text.contains("presente toi")) {
             return CommandResult.Handled(
-                responseSpeech = "Je suis DJAMI, votre assistante vocale et intelligence artificielle intelligente en français pour Android.",
+                responseSpeech = "Je suis DJAMI, votre assistante vocale et intelligence artificielle en français pour Android.",
                 actionDescription = "Présentation de DJAMI"
             )
         }
 
-        // 14. Blague
-        if (text.contains("blague") || text.contains("drôle") || text.contains("fais-moi rire")) {
+        // 14. Blague (demande explicite)
+        if ((text.contains("blague") || text.contains("drôle") || text.contains("drole") || text.contains("fais-moi rire") || text.contains("fais moi rire")) &&
+            (text.contains("raconte") || text.contains("dis-moi") || text.contains("dis moi") || text.contains("fais-moi rire") || text.contains("fais moi rire") || text.startsWith("une blague") || text == "blague")) {
             val blague = jokes.random()
             return CommandResult.Handled(
                 responseSpeech = blague,
@@ -227,8 +274,9 @@ class LocalCommandManager(private val context: Context) {
             )
         }
 
-        // 15. Citation
-        if (text.contains("citation") || text.contains("proverbe") || text.contains("inspire")) {
+        // 15. Citation inspirante
+        if ((text.contains("citation") || text.contains("proverbe")) &&
+            (text.contains("donne") || text.contains("dis-moi") || text.contains("dis moi") || text.contains("raconte") || text.startsWith("une citation") || text.startsWith("un proverbe") || text == "citation" || text == "proverbe")) {
             val citation = quotes.random()
             return CommandResult.Handled(
                 responseSpeech = citation,

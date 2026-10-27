@@ -134,15 +134,28 @@ fun DjamiScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showDiagnostics by remember { mutableStateOf(false) }
 
-    // Launcher de permissions
+    // L'action à reprendre après la demande de permission est mémorisée :
+    // démarrer l'écoute manuelle ou activer la veille sont deux parcours distincts.
+    var pendingPermissionAction by remember { mutableStateOf("listen") }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val recordAudioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
-        if (recordAudioGranted) {
-            viewModel.startListening()
-        } else {
-            viewModel.logDiagnostic("Permission RECORD_AUDIO refusée par l'utilisateur.")
+        val recordAudioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (!recordAudioGranted) {
+            viewModel.logDiagnostic("Permission microphone refusée. Autorisez le microphone dans les paramètres Android.")
+            return@rememberLauncherForActivityResult
+        }
+
+        when (pendingPermissionAction) {
+            "wake_on" -> viewModel.toggleWakeWord(true)
+            "wake_off" -> viewModel.toggleWakeWord(false)
+            else -> viewModel.startListening()
         }
     }
 
@@ -158,23 +171,30 @@ fun DjamiScreen(
         if (notGranted.isEmpty()) {
             viewModel.startListening()
         } else {
+            pendingPermissionAction = "listen"
             permissionLauncher.launch(notGranted.toTypedArray())
         }
     }
 
     val requestPermissionsAndToggleWake = { shouldActivate: Boolean ->
-        val permissionsToRequest = mutableListOf(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        val notGranted = permissionsToRequest.filter {
-            ContextCompat.checkSelfPermission(context, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        }
-
-        if (notGranted.isEmpty()) {
-            viewModel.toggleWakeWord(shouldActivate)
+        // L'arrêt de la veille ne doit jamais être bloqué par une permission refusée.
+        if (!shouldActivate) {
+            viewModel.toggleWakeWord(false)
         } else {
-            permissionLauncher.launch(notGranted.toTypedArray())
+            val permissionsToRequest = mutableListOf(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            val notGranted = permissionsToRequest.filter {
+                ContextCompat.checkSelfPermission(context, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+
+            if (notGranted.isEmpty()) {
+                viewModel.toggleWakeWord(true)
+            } else {
+                pendingPermissionAction = "wake_on"
+                permissionLauncher.launch(notGranted.toTypedArray())
+            }
         }
     }
 
@@ -253,12 +273,14 @@ fun DjamiScreen(
             contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
         ) {
 
-            // 1. Badge d'état visuel (Prêt, Écoute, Traitement, Réponse, Erreur)
+            // 1. Badge d'état visuel (Prêt, Écoute, Traitement, Réponse, Arrêté, Erreur)
             item {
                 StatusIndicatorBadge(
                     status = uiState.status,
                     statusMessage = uiState.statusMessage,
-                    isSpeaking = uiState.isSpeaking
+                    isSpeaking = uiState.isSpeaking,
+                    canRetry = uiState.canRetryListening,
+                    onRetry = { viewModel.retryListening() }
                 )
             }
 
@@ -293,10 +315,10 @@ fun DjamiScreen(
                     isListening = uiState.status == DjamiStatusType.LISTENING,
                     isSpeaking = uiState.isSpeaking,
                     onClick = {
-                        if (uiState.status == DjamiStatusType.LISTENING) {
-                            viewModel.stopListening()
-                        } else {
-                            requestPermissionsAndSpeak()
+                        when {
+                            uiState.status == DjamiStatusType.LISTENING -> viewModel.stopListening()
+                            uiState.isSpeaking -> viewModel.stopSpeech()
+                            else -> requestPermissionsAndSpeak()
                         }
                     }
                 )
@@ -489,7 +511,9 @@ fun DjamiScreen(
 fun StatusIndicatorBadge(
     status: DjamiStatusType,
     statusMessage: String,
-    isSpeaking: Boolean
+    isSpeaking: Boolean,
+    canRetry: Boolean = false,
+    onRetry: () -> Unit = {}
 ) {
     val (bgColor, borderColor, textColor, icon) = when (status) {
         DjamiStatusType.READY -> Quadruple(
@@ -516,6 +540,12 @@ fun StatusIndicatorBadge(
             DjamiGoldDark,
             Icons.AutoMirrored.Filled.VolumeUp
         )
+        DjamiStatusType.STOPPED -> Quadruple(
+            Color(0xFFF3F4F6),
+            DjamiBorder,
+            DjamiTextSecondary,
+            Icons.Default.Stop
+        )
         DjamiStatusType.ERROR -> Quadruple(
             Color(0xFFFEE2E2),
             DjamiStatusError,
@@ -534,35 +564,55 @@ fun StatusIndicatorBadge(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = textColor,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column {
-                Text(
-                    text = when (status) {
-                        DjamiStatusType.READY -> "ÉTAT : PRÊT"
-                        DjamiStatusType.LISTENING -> "ÉTAT : EN ÉCOUTE"
-                        DjamiStatusType.PROCESSING -> "ÉTAT : TRAITEMENT"
-                        DjamiStatusType.SPEAKING -> "ÉTAT : VOCALISATION"
-                        DjamiStatusType.ERROR -> "ÉTAT : ERREUR"
-                    },
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = textColor,
-                    letterSpacing = 0.5.sp
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = textColor,
+                    modifier = Modifier.size(20.dp)
                 )
-                Text(
-                    text = statusMessage,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = DjamiTextPrimary
-                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = when (status) {
+                            DjamiStatusType.READY -> "ÉTAT : PRÊT"
+                            DjamiStatusType.LISTENING -> "ÉTAT : EN ÉCOUTE"
+                            DjamiStatusType.PROCESSING -> "ÉTAT : TRAITEMENT"
+                            DjamiStatusType.SPEAKING -> "ÉTAT : VOCALISATION"
+                            DjamiStatusType.STOPPED -> "ÉTAT : ARRÊTÉ"
+                            DjamiStatusType.ERROR -> "ÉTAT : ERREUR"
+                        },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = textColor,
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(
+                        text = statusMessage,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = DjamiTextPrimary
+                    )
+                }
+            }
+
+            if (status == DjamiStatusType.ERROR && canRetry) {
+                OutlinedButton(
+                    onClick = onRetry,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = textColor),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, textColor),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(start = 8.dp)
+                ) {
+                    Text("Réessayer", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
@@ -719,10 +769,10 @@ fun MainSpeakButton(
         label = "pulse_scale"
     )
 
-    val gradient = if (isListening) {
-        Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706), Color(0xFFB45309)))
-    } else {
-        Brush.linearGradient(listOf(DjamiGoldBright, DjamiGold, DjamiGoldDark))
+    val gradient = when {
+        isListening -> Brush.linearGradient(listOf(Color(0xFFF59E0B), Color(0xFFD97706), Color(0xFFB45309)))
+        isSpeaking -> Brush.linearGradient(listOf(Color(0xFFDC2626), Color(0xFFB91C1C), Color(0xFF991B1B)))
+        else -> Brush.linearGradient(listOf(DjamiGoldBright, DjamiGold, DjamiGoldDark))
     }
 
     Box(
@@ -734,7 +784,7 @@ fun MainSpeakButton(
         Surface(
             onClick = onClick,
             shape = RoundedCornerShape(30.dp),
-            shadowElevation = if (isListening) 12.dp else 6.dp,
+            shadowElevation = if (isListening || isSpeaking) 12.dp else 6.dp,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(68.dp)
@@ -752,14 +802,18 @@ fun MainSpeakButton(
                     horizontalArrangement = Arrangement.Center
                 ) {
                     Icon(
-                        imageVector = if (isListening) Icons.Default.Stop else Icons.Default.Mic,
+                        imageVector = if (isListening || isSpeaking) Icons.Default.Stop else Icons.Default.Mic,
                         contentDescription = null,
                         tint = DjamiWhite,
                         modifier = Modifier.size(28.dp)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = if (isListening) "Terminer l'écoute" else "🎤 Parler à DJAMI",
+                        text = when {
+                            isListening -> "Terminer l'écoute"
+                            isSpeaking -> "Arrêter la voix"
+                            else -> "🎤 Parler à DJAMI"
+                        },
                         fontSize = 19.sp,
                         fontWeight = FontWeight.Bold,
                         color = DjamiWhite
@@ -820,7 +874,7 @@ fun ControlsRow(
                     color = DjamiTextPrimary
                 )
                 Text(
-                    text = if (isOfflineMode) "Rapide & 100% privé" else "Gemini IA connecté",
+                    text = if (isOfflineMode) "Commandes locales" else "IA générative Gemini",
                     fontSize = 10.sp,
                     color = DjamiTextSecondary
                 )
